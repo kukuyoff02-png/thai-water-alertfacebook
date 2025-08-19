@@ -20,9 +20,8 @@ from selenium.common.exceptions import StaleElementReferenceException
 # --- ค่าคงที่ ---
 SINGBURI_URL = "https://singburi.thaiwater.net/wl"
 DISCHARGE_URL = 'https://tiwrm.hii.or.th/DATA/REPORT/php/chart/chaopraya/small/chaopraya.php'
-LINE_TOKEN = os.environ.get('LINE_CHANNEL_ACCESS_TOKEN')
-LINE_GROUP_ID = os.environ.get('LINE_GROUP_ID') # Get Group ID from environment variable
-LINE_PUSH_API_URL = "https://api.line.me/v2/bot/message/push"
+# --- [ใหม่] ดึงค่า Webhook URL จาก GitHub Secrets ---
+MAKE_WEBHOOK_URL = os.environ.get('MAKE_WEBHOOK_URL')
 
 # -- อ่านข้อมูลย้อนหลังจาก Excel --
 THAI_MONTHS = {
@@ -31,21 +30,14 @@ THAI_MONTHS = {
     'กันยายน':9, 'ตุลาคม':10, 'พฤศจิกายน':11, 'ธันวาคม':12
 }
 def get_historical_from_excel(year_be: int) -> int | None:
-    """
-    อ่านไฟล์ data/ระดับน้ำปี{year_be}.xlsx
-    คืนค่า discharge (ลบ.ม./วิ) ของวัน–เดือน ปัจจุบัน
-    """
     path = f"data/ระดับน้ำปี{year_be}.xlsx"
     try:
         if not os.path.exists(path):
             print(f"⚠️ ไม่พบไฟล์ข้อมูลย้อนหลังที่: {path}")
             return None
         df = pd.read_excel(path)
-        # เปลี่ยนเป็นแม็ปชื่อคอลัมน์ให้ตรงกับไฟล์ Excel จริง
-        # (ดูชื่อ header ในไฟล์ว่าตรงนี้คือ 'ปริมาณน้ำ (ลบ.ม./วินาที)')
         df = df.rename(columns={'ปริมาณน้ำ (ลบ.ม./วินาที)': 'discharge'})
         df['month_num'] = df['เดือน'].map(THAI_MONTHS)
-
         now = datetime.now(pytz.timezone('Asia/Bangkok'))
         today_d, today_m = now.day, now.month
         match = df[(df['วันที่']==today_d) & (df['month_num']==today_m)]
@@ -65,17 +57,13 @@ def get_inburi_data(url: str, timeout: int = 45, retries: int = 3):
     opts.add_argument("--headless")
     opts.add_argument("--no-sandbox")
     opts.add_argument("--disable-dev-shm-usage")
-    
     driver = None
     for attempt in range(retries):
         try:
             driver = webdriver.Chrome(service=Service(ChromeDriverManager().install()), options=opts)
             driver.get(url)
-            WebDriverWait(driver, timeout).until(
-                EC.presence_of_element_located((By.CSS_SELECTOR, "th[scope='row']"))
-            )
+            WebDriverWait(driver, timeout).until(EC.presence_of_element_located((By.CSS_SELECTOR, "th[scope='row']")))
             html = driver.page_source
-            
             soup = BeautifulSoup(html, "html.parser")
             for th in soup.select("th[scope='row']"):
                 if "อินทร์บุรี" in th.get_text(strip=True):
@@ -86,52 +74,32 @@ def get_inburi_data(url: str, timeout: int = 45, retries: int = 3):
                     print(f"✅ พบข้อมูลอินทร์บุรี: ระดับน้ำ={water_level}, ระดับตลิ่ง={bank_level} (ค่าโดยประมาณ)")
                     if driver: driver.quit()
                     return water_level, bank_level
-            
             print("⚠️ ไม่พบข้อมูลสถานี 'อินทร์บุรี' ในตาราง")
             if driver: driver.quit()
             return None, None
-        except StaleElementReferenceException:
-            print(f"⚠️ เจอ Stale Element Reference (ครั้งที่ {attempt + 1}/{retries}), กำลังลองใหม่...")
-            if driver: driver.quit()
-            time.sleep(3)
-            continue
         except Exception as e:
             print(f"❌ ERROR: get_inburi_data: {e}")
             if driver: driver.quit()
             return None, None
     return None, None
 
-# --- ดึงข้อมูลเขื่อนเจ้าพระยา (เพิ่ม Cache Busting) ---
+# --- ดึงข้อมูลเขื่อนเจ้าพระยา ---
 def fetch_chao_phraya_dam_discharge(url: str, timeout: int = 30):
     try:
-        # เพิ่ม headers เพื่อพยายามไม่ให้ติด cache
-        headers = {
-            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
-            'Cache-Control': 'no-cache',
-            'Pragma': 'no-cache'
-        }
-        # เพิ่มตัวเลขสุ่มต่อท้าย URL (Cache Busting)
+        headers = {'User-Agent': 'Mozilla/5.0', 'Cache-Control': 'no-cache', 'Pragma': 'no-cache'}
         cache_buster_url = f"{url}?cb={random.randint(10000, 99999)}"
-        
         response = requests.get(cache_buster_url, headers=headers, timeout=10)
         response.raise_for_status()
         response.encoding = 'utf-8'
-        
         match = re.search(r'var json_data = (\[.*\]);', response.text)
         if not match:
             print("❌ ERROR: ไม่พบข้อมูล JSON ในหน้าเว็บ")
             return None
-            
         json_string = match.group(1)
         data = json.loads(json_string)
-        
         water_storage = data[0]['itc_water']['C13']['storage']
         if water_storage is not None:
-            if isinstance(water_storage, (int, float)):
-                value = float(water_storage)
-            else:
-                value = float(str(water_storage).replace(',', ''))
-                
+            value = float(str(water_storage).replace(',', ''))
             print(f"✅ พบข้อมูลเขื่อนเจ้าพระยา: {value}")
             return value
     except Exception as e:
@@ -141,50 +109,29 @@ def fetch_chao_phraya_dam_discharge(url: str, timeout: int = 30):
 # --- วิเคราะห์และสร้างข้อความ ---
 def analyze_and_create_message(inburi_level, dam_discharge, bank_height, hist_2567=None, hist_2554=None):
     distance_to_bank = bank_height - inburi_level
-    
-    ICON = ""
-    HEADER = ""
-    summary_text = ""
-
+    ICON, HEADER, summary_text = "", "", ""
     if dam_discharge > 2400 or distance_to_bank < 1.0:
-        ICON = "🟥"
-        HEADER = "‼️ ประกาศเตือนภัยระดับสูงสุด ‼️"
+        ICON, HEADER = "🟥", "‼️ ประกาศเตือนภัยระดับสูงสุด ‼️"
         summary_text = "คำแนะนำ:\n1. เตรียมพร้อมอพยพหากอยู่ในพื้นที่เสี่ยง\n2. ขนย้ายทรัพย์สินขึ้นที่สูงโดยด่วน\n3. งดใช้เส้นทางสัญจรริมแม่น้ำ"
     elif dam_discharge > 1800 or distance_to_bank < 2.0:
-        ICON = "🟨"
-        HEADER = "‼️ ประกาศเฝ้าระวัง ‼️"
+        ICON, HEADER = "🟨", "‼️ ประกาศเฝ้าระวัง ‼️"
         summary_text = "คำแนะนำ:\n1. บ้านเรือนริมตลิ่งนอกคันกั้นน้ำ ให้เริ่มขนของขึ้นที่สูง\n2. ติดตามสถานการณ์อย่างใกล้ชิด"
     else:
-        ICON = "🟩"
-        HEADER = "สถานะปกติ"
+        ICON, HEADER = "🟩", "สถานะปกติ"
         summary_text = "สถานการณ์น้ำยังปกติ ใช้ชีวิตได้ตามปกติครับ"
-
     now = datetime.now(pytz.timezone('Asia/Bangkok'))
     TIMESTAMP = now.strftime('%d/%m/%Y %H:%M')
-
     msg_lines = [
-        f"{ICON} {HEADER}",
-        "",
-        f"📍 รายงานสถานการณ์น้ำเจ้าพระยา จ.อ.อินทร์บุรี",
-        f"🗓️ วันที่: {TIMESTAMP} น.",
-        "",
+        f"{ICON} {HEADER}", "",
+        f"📍 รายงานสถานการณ์น้ำเจ้าพระยา จ.อ.อินทร์บุรี", f"🗓️ วันที่: {TIMESTAMP} น.", "",
         "🌊 ระดับน้ำ + ระดับตลิ่ง",
-        f"  • อินทร์บุรี: {inburi_level:.2f} ม.รทก.",
-        f"  • ตลิ่ง: {bank_height:.2f} ม.รทก. (ต่ำกว่า {distance_to_bank:.2f} ม.)",
-        "",
-        "💧 ปริมาณน้ำปล่อยเขื่อนเจ้าพระยา",
-        f"  {dam_discharge:,} ลบ.ม./วินาที",
-        "",
+        f"  • อินทร์บุรี: {inburi_level:.2f} ม.รทก.", f"  • ตลิ่ง: {bank_height:.2f} ม.รทก. (ต่ำกว่า {distance_to_bank:.2f} ม.)", "",
+        "💧 ปริมาณน้ำปล่อยเขื่อนเจ้าพระยา", f"  {dam_discharge:,} ลบ.ม./วินาที", "",
         "🔄 เปรียบเทียบย้อนหลัง",
     ]
-    if hist_2567 is not None:
-        msg_lines.append(f"  • ปี 2567: {hist_2567:,} ลบ.ม./วินาที")
-    if hist_2554 is not None:
-        msg_lines.append(f"  • ปี 2554: {hist_2554:,} ลบ.ม./วินาที")
-    msg_lines += [
-        "",
-        summary_text
-    ]
+    if hist_2567 is not None: msg_lines.append(f"  • ปี 2567: {hist_2567:,} ลบ.ม./วินาที")
+    if hist_2554 is not None: msg_lines.append(f"  • ปี 2554: {hist_2554:,} ลบ.ม./วินาที")
+    msg_lines += ["", summary_text]
     return "\n".join(msg_lines)
 
 # --- สร้างข้อความ Error ---
@@ -198,72 +145,39 @@ def create_error_message(inburi_status, discharge_status):
         f"กรุณาตรวจสอบ Log บน GitHub Actions เพื่อดูรายละเอียดข้อผิดพลาดครับ"
     )
 
-# --- ส่งข้อความ LINE (ฉบับปรับปรุง) ---
-def send_line_push(message):
-    if not LINE_TOKEN:
-        print("❌ ไม่พบ LINE_CHANNEL_ACCESS_TOKEN!")
+# --- [ใหม่] ฟังก์ชันสำหรับส่งข้อมูลไปที่ Make.com Webhook ---
+def send_to_make_webhook(message: str):
+    if not MAKE_WEBHOOK_URL:
+        print("❌ ไม่พบ MAKE_WEBHOOK_URL! กรุณาตั้งค่าใน GitHub Secrets")
         return
-    if not LINE_GROUP_ID:
-        print("❌ ไม่พบ LINE_GROUP_ID! กรุณาตั้งค่าใน GitHub Secrets")
-        return
-
-    headers = {"Content-Type": "application/json", "Authorization": f"Bearer {LINE_TOKEN}"}
-    # Payload for Push Message
-    payload = {
-        "to": LINE_GROUP_ID,
-        "messages": [{"type": "text", "text": message}]
-    }
-    
-    retries = 3 # จำนวนครั้งที่จะลองใหม่
-    delay = 5   # เริ่มต้นรอ 5 วินาที
-
-    for i in range(retries):
-        try:
-            # Use the PUSH API URL
-            res = requests.post(LINE_PUSH_API_URL, headers=headers, json=payload, timeout=15)
-            res.raise_for_status() 
-            
-            print("✅ ส่งข้อความ Push สำเร็จ!")
-            return
-            
-        except requests.exceptions.HTTPError as err:
-            if err.response.status_code == 429:
-                print(f"⚠️ API แจ้งว่าส่งถี่เกินไป (429), กำลังลองใหม่ในอีก {delay} วินาที... (ครั้งที่ {i + 1}/{retries})")
-                time.sleep(delay)
-                delay *= 2
-            else:
-                print(f"❌ ERROR: LINE Push (HTTP Error): {err}")
-                print(f"    Response: {err.response.text}") # Print error response for more details
-                break
-        except Exception as e:
-            print(f"❌ ERROR: LINE Push (General Error): {e}")
-            break
-
-    print("❌ ไม่สามารถส่งข้อความได้หลังจากการพยายามหลายครั้ง")
-
+    payload = {"message": message}
+    headers = {"Content-Type": "application/json"}
+    try:
+        res = requests.post(MAKE_WEBHOOK_URL, headers=headers, json=payload, timeout=20)
+        res.raise_for_status()
+        if res.text == "Accepted":
+             print(f"✅ ส่งข้อมูลไปที่ Make.com Webhook สำเร็จ!")
+        else:
+             print(f"⚠️ Webhook ตอบกลับมาว่า: {res.text}")
+    except requests.exceptions.RequestException as e:
+        print(f"❌ ERROR: ไม่สามารถส่งข้อมูลไปที่ Webhook ได้: {e}")
 
 # --- Main ---
 if __name__ == "__main__":
     print("=== เริ่มการทำงานระบบแจ้งเตือนน้ำอินทร์บุรี ===")
-    
-    inburi_cache_buster_url = f"{SINGBURI_URL}?cb={random.randint(10000, 99999)}"
-    
-    inburi_level, bank_level = get_inburi_data(inburi_cache_buster_url)
+    inburi_level, bank_level = get_inburi_data(f"{SINGBURI_URL}?cb={random.randint(10000, 99999)}")
     dam_discharge = fetch_chao_phraya_dam_discharge(DISCHARGE_URL)
-    
-    # ดึงข้อมูลย้อนหลังจาก Excel
     hist_2567 = get_historical_from_excel(2567)
     hist_2554 = get_historical_from_excel(2554)
-
     if inburi_level is not None and bank_level is not None and dam_discharge is not None:
         final_message = analyze_and_create_message(inburi_level, dam_discharge, bank_level, hist_2567, hist_2554)
     else:
         inburi_status = "สำเร็จ" if inburi_level is not None else "ล้มเหลว"
         discharge_status = "สำเร็จ" if dam_discharge is not None else "ล้มเหลว"
         final_message = create_error_message(inburi_status, discharge_status)
-
-    print("\n📤 ข้อความที่จะแจ้งเตือน:")
+    print("\n📤 ข้อความที่จะส่ง:")
     print(final_message)
-    print("\n🚀 ส่งข้อความไปยัง LINE...")
-    send_line_push(final_message)
+    # --- [เปลี่ยน] เรียกใช้ฟังก์ชันใหม่เพื่อส่งไปที่ Make.com ---
+    print("\n🚀 ส่งข้อมูลไปยัง Make.com Webhook...")
+    send_to_make_webhook(final_message)
     print("✅ เสร็จสิ้นการทำงาน")
