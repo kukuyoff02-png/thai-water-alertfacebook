@@ -12,10 +12,9 @@ jobs:
   notify:
     runs-on: ubuntu-latest
     steps:
+      # --- [แก้ไข] ลบส่วน with: และ token: ที่ไม่จำเป็นออกไป ---
       - name: Check out repository
         uses: actions/checkout@v4
-        with:
-          token: ${{ secrets.PAT_TOKEN }}
 
       - name: Set up Python
         uses: actions/setup-python@v5
@@ -29,6 +28,5 @@ jobs:
 
       - name: Run Python script
         env:
-          # --- [แก้ไข] เปลี่ยนมาใช้ Secret ของ Make.com Webhook ---
           MAKE_WEBHOOK_URL: ${{ secrets.MAKE_WEBHOOK_URL }}
         run: python main.py
