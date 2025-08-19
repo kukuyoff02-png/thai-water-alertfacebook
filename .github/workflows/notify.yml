@@ -1,17 +1,11 @@
 name: Daily Water Level Notification
 
-# By default, GitHub Actions runs cron jobs in UTC. To schedule this workflow to
-# run at 07:30 and 16:00 every day in Thailand (Asia/Bangkok, UTC+07), convert those
-# times to UTC (00:30 and 09:00). See GitHub docs for details on cron schedules.
-# The workflow file must live in the `.github/workflows` directory for GitHub to
-# detect and run it.
 on:
   schedule:
     # 07:30 ICT -> 00:30 UTC
     - cron: '30 0 * * *'
     # 16:00 ICT -> 09:00 UTC
     - cron: '0 9 * * *'
-  # Allows you to manually run this workflow from the Actions tab.
   workflow_dispatch:
 
 jobs:
@@ -21,7 +15,6 @@ jobs:
       - name: Check out repository
         uses: actions/checkout@v4
         with:
-          # Use a Personal Access Token (PAT) to avoid permission issues when checking out
           token: ${{ secrets.PAT_TOKEN }}
 
       - name: Set up Python
@@ -36,7 +29,6 @@ jobs:
 
       - name: Run Python script
         env:
-          # Provide your LINE secrets via repository secrets
-          LINE_CHANNEL_ACCESS_TOKEN: ${{ secrets.LINE_CHANNEL_ACCESS_TOKEN }}
-          LINE_GROUP_ID: ${{ secrets.LINE_GROUP_ID }}
+          # --- [แก้ไข] เปลี่ยนมาใช้ Secret ของ Make.com Webhook ---
+          MAKE_WEBHOOK_URL: ${{ secrets.MAKE_WEBHOOK_URL }}
         run: python main.py
