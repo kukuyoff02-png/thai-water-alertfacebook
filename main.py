@@ -291,54 +291,6 @@ def send_line_push(message):
 
     print("❌ ไม่สามารถส่งข้อความได้หลังจากการพยายามหลายครั้ง")
 
-
-# --- Main ---
-if __name__ == "__main__":
-    print("=== เริ่มการทำงานระบบแจ้งเตือนน้ำอินทร์บุรี ===")
-    
-    inburi_cache_buster_url = f"{SINGBURI_URL}?cb={random.randint(10000, 99999)}"
-    
-    inburi_level, bank_level = get_inburi_data(inburi_cache_buster_url)
-    dam_discharge = fetch_chao_phraya_dam_discharge(DISCHARGE_URL)
-    
-    # ดึงข้อมูลย้อนหลังจาก Excel (ตามวันวันนี้)
-    hist_2567 = get_historical_from_excel(2567)
-    hist_2565 = get_historical_from_excel(2565)
-    hist_2554 = get_historical_from_excel(2554)
-
-    if inburi_level is not None and bank_level is not None and dam_discharge is not None:
-        final_message = analyze_and_create_message(
-            inburi_level,
-            dam_discharge,
-            bank_level,
-            hist_2567=hist_2567,
-            hist_2565=hist_2565,
-            hist_2554=hist_2554,
-        )
-    else:
-        inburi_status = "สำเร็จ" if inburi_level is not None else "ล้มเหลว"
-        discharge_status = "สำเร็จ" if dam_discharge is not None else "ล้มเหลว"
-        final_message = create_error_message(inburi_status, discharge_status)
-
-    print("\n📤 ข้อความที่จะแจ้งเตือน:")
-    print(final_message)
-    # ส่งข้อความไปยัง LINE
-    print("\n🚀 ส่งข้อความไปยัง LINE…")
-    send_line_push(final_message)
-    # เตรียมข้อมูลเพิ่มเติมสำหรับ Make Webhook
-    extra_payload = {
-        "inburi_level": inburi_level,
-        "bank_level": bank_level,
-        "dam_discharge": dam_discharge,
-        "hist_2567": hist_2567,
-        "hist_2565": hist_2565,
-        "hist_2554": hist_2554,
-    }
-    # ส่งข้อความและข้อมูลเพิ่มเติมไปยัง Make Webhook หากกำหนด URL ไว้
-    print("\n🔗 ส่งข้อความไปยัง Make Webhook…")
-    send_make_webhook(final_message, extra_data=extra_payload)
-    print("✅ เสร็จสิ้นการทำงาน")
-
 # --- ส่งข้อมูลไปยัง Make Webhook ---
 def send_make_webhook(message: str, extra_data: dict | None = None) -> None:
     """
@@ -386,3 +338,53 @@ def send_make_webhook(message: str, extra_data: dict | None = None) -> None:
             pass
     except Exception as e:
         print(f"❌ ERROR: ส่งข้อมูลไปยัง Make Webhook (General Error): {e}")
+
+
+# --- Main ---
+if __name__ == "__main__":
+    print("=== เริ่มการทำงานระบบแจ้งเตือนน้ำอินทร์บุรี ===")
+    
+    inburi_cache_buster_url = f"{SINGBURI_URL}?cb={random.randint(10000, 99999)}"
+    
+    inburi_level, bank_level = get_inburi_data(inburi_cache_buster_url)
+    dam_discharge = fetch_chao_phraya_dam_discharge(DISCHARGE_URL)
+    
+    # ดึงข้อมูลย้อนหลังจาก Excel (ตามวันวันนี้)
+    hist_2567 = get_historical_from_excel(2567)
+    hist_2565 = get_historical_from_excel(2565)
+    hist_2554 = get_historical_from_excel(2554)
+
+    if inburi_level is not None and bank_level is not None and dam_discharge is not None:
+        final_message = analyze_and_create_message(
+            inburi_level,
+            dam_discharge,
+            bank_level,
+            hist_2567=hist_2567,
+            hist_2565=hist_2565,
+            hist_2554=hist_2554,
+        )
+    else:
+        inburi_status = "สำเร็จ" if inburi_level is not None else "ล้มเหลว"
+        discharge_status = "สำเร็จ" if dam_discharge is not None else "ล้มเหลว"
+        final_message = create_error_message(inburi_status, discharge_status)
+
+    print("\n📤 ข้อความที่จะแจ้งเตือน:")
+    print(final_message)
+    # ส่งข้อความไปยัง LINE
+    print("\n🚀 ส่งข้อความไปยัง LINE…")
+    send_line_push(final_message)
+    # เตรียมข้อมูลเพิ่มเติมสำหรับ Make Webhook
+    extra_payload = {
+        "inburi_level": inburi_level,
+        "bank_level": bank_level,
+        "dam_discharge": dam_discharge,
+        "hist_2567": hist_2567,
+        "hist_2565": hist_2565,
+        "hist_2554": hist_2554,
+    }
+    # ส่งข้อความและข้อมูลเพิ่มเติมไปยัง Make Webhook หากกำหนด URL ไว้
+    print("\n🔗 ส่งข้อความไปยัง Make Webhook…")
+    send_make_webhook(final_message, extra_data=extra_payload)
+print("✅ เสร็จสิ้นการทำงาน")
+
+# หมายเหตุ: ฟังก์ชัน send_make_webhook ถูกย้ายไปไว้ด้านบนของไฟล์
