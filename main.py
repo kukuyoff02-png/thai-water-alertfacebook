@@ -24,6 +24,9 @@ LINE_TOKEN = os.environ.get('LINE_CHANNEL_ACCESS_TOKEN')
 LINE_GROUP_ID = os.environ.get('LINE_GROUP_ID') # Get Group ID from environment variable
 LINE_PUSH_API_URL = "https://api.line.me/v2/bot/message/push"
 
+# URL สำหรับ Webhook ของ Make.com (กำหนดผ่านตัวแปรสภาพแวดล้อม)
+MAKE_WEBHOOK_URL = os.environ.get('MAKE_WEBHOOK_URL')
+
 # -- อ่านข้อมูลย้อนหลังจาก Excel --
 THAI_MONTHS = {
     'มกราคม':1, 'กุมภาพันธ์':2, 'มีนาคม':3, 'เมษายน':4,
@@ -319,6 +322,67 @@ if __name__ == "__main__":
 
     print("\n📤 ข้อความที่จะแจ้งเตือน:")
     print(final_message)
-    print("\n🚀 ส่งข้อความไปยัง LINE...")
+    # ส่งข้อความไปยัง LINE
+    print("\n🚀 ส่งข้อความไปยัง LINE…")
     send_line_push(final_message)
+    # เตรียมข้อมูลเพิ่มเติมสำหรับ Make Webhook
+    extra_payload = {
+        "inburi_level": inburi_level,
+        "bank_level": bank_level,
+        "dam_discharge": dam_discharge,
+        "hist_2567": hist_2567,
+        "hist_2565": hist_2565,
+        "hist_2554": hist_2554,
+    }
+    # ส่งข้อความและข้อมูลเพิ่มเติมไปยัง Make Webhook หากกำหนด URL ไว้
+    print("\n🔗 ส่งข้อความไปยัง Make Webhook…")
+    send_make_webhook(final_message, extra_data=extra_payload)
     print("✅ เสร็จสิ้นการทำงาน")
+
+# --- ส่งข้อมูลไปยัง Make Webhook ---
+def send_make_webhook(message: str, extra_data: dict | None = None) -> None:
+    """
+    ส่งข้อความและข้อมูลเพิ่มเติมไปยัง Make.com ผ่าน Webhook
+
+    Parameters
+    ----------
+    message : str
+        ข้อความหลักที่จะส่ง (เช่น ข้อความสรุปสถานการณ์น้ำ)
+    extra_data : dict | None, optional
+        ข้อมูลเพิ่มเติม (เช่น ค่าตัวเลขต่าง ๆ) ที่จะรวมเข้ากับ Payload (ค่าเริ่มต้นคือ None)
+
+    รายละเอียด:
+        - หากไม่พบตัวแปรสภาพแวดล้อม MAKE_WEBHOOK_URL จะไม่ทำการส่งข้อมูลและแสดงข้อความแจ้งเตือน
+        - Payload จะประกอบด้วยคีย์ 'message' และรวมคีย์จาก extra_data ถ้ามี
+        - ใช้ไลบรารี requests ในการ POST ข้อมูลเป็น JSON
+    """
+    url = MAKE_WEBHOOK_URL
+    if not url:
+        print("⚠️ ไม่พบ MAKE_WEBHOOK_URL ในสภาพแวดล้อม จึงไม่ส่งข้อมูลไปยัง Make Webhook")
+        return
+
+    # สร้างข้อมูลส่งออกเป็น JSON
+    payload = {"message": message}
+    if extra_data:
+        # รวมข้อมูลเพิ่มเติมเข้ากับ payload
+        try:
+            for k, v in extra_data.items():
+                # แปลงค่า NaN/None เป็น None เพื่อให้ JSON รองรับได้
+                payload[k] = None if (v is None or (hasattr(v, 'isna') and v.isna())) else v
+        except Exception:
+            # หากเกิดข้อผิดพลาดในการรวมข้อมูล ไม่ให้กระทบข้อมูลหลัก
+            pass
+
+    headers = {"Content-Type": "application/json"}
+    try:
+        response = requests.post(url, headers=headers, json=payload, timeout=15)
+        response.raise_for_status()
+        print("✅ ส่งข้อมูลไปยัง Make Webhook สำเร็จ!")
+    except requests.exceptions.HTTPError as err:
+        print(f"❌ ERROR: Make Webhook (HTTP Error): {err}")
+        try:
+            print(f"    Response: {err.response.text}")
+        except Exception:
+            pass
+    except Exception as e:
+        print(f"❌ ERROR: ส่งข้อมูลไปยัง Make Webhook (General Error): {e}")
