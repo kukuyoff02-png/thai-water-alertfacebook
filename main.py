@@ -126,14 +126,42 @@ def get_inburi_data(url: str, timeout: int = 45, retries: int = 3):
             
             soup = BeautifulSoup(html, "html.parser")
             for th in soup.select("th[scope='row']"):
+                # ตรวจสอบว่าเป็นแถวข้อมูลของสถานีอินทร์บุรี
                 if "อินทร์บุรี" in th.get_text(strip=True):
                     tr = th.find_parent("tr")
                     cols = tr.find_all("td")
-                    water_level = float(cols[1].get_text(strip=True))
-                    bank_level = 13.0
-                    print(f"✅ พบข้อมูลอินทร์บุรี: ระดับน้ำ={water_level}, ระดับตลิ่ง={bank_level} (ค่าโดยประมาณ)")
-                    if driver: driver.quit()
-                    return water_level, bank_level
+                    water_level = None
+                    bank_level = None
+                    numeric_values: list[float] = []
+                    # วนลูปตรวจหาเซลล์ที่เป็นตัวเลข (เช่น ระดับน้ำและตลิ่ง)
+                    for td in cols:
+                        text = td.get_text(strip=True)
+                        # แปลงข้อความตัวเลขที่มี comma หรือตัวอักษรอื่น ๆ ออก
+                        # หากไม่สามารถแปลงเป็นตัวเลข ให้ข้าม
+                        try:
+                            # ลบ comma และช่องว่าง
+                            cleaned = re.sub(r"[ ,]", "", text)
+                            # แปลงตัวอักษรไทยบางตัวที่อาจเป็นตัวคั่น (เช่น “ม.”) ออกก่อนแปลง
+                            cleaned = re.sub(r"[^0-9\.\-]", "", cleaned)
+                            if cleaned == "" or cleaned == "-":
+                                continue
+                            num = float(cleaned)
+                            numeric_values.append(num)
+                        except Exception:
+                            # ไม่ใช่ค่าตัวเลข
+                            continue
+                    # กำหนด water level และ bank level จากลิสต์ค่าเลข หากพบ
+                    if numeric_values:
+                        water_level = numeric_values[0]
+                        # หากมีค่าเลขที่สอง ให้ใช้เป็นระดับตลิ่ง มิฉะนั้นใช้ค่าโดยประมาณ 13.0
+                        bank_level = numeric_values[1] if len(numeric_values) > 1 else 13.0
+                        print(f"✅ พบข้อมูลอินทร์บุรี: ระดับน้ำ={water_level}, ระดับตลิ่ง={bank_level}")
+                        if driver:
+                            driver.quit()
+                        return water_level, bank_level
+                    # หากไม่พบตัวเลขในแถวนี้ ให้พิมพ์เตือนและไปเช็คแถวถัดไป
+                    print("⚠️ ไม่สามารถแปลงค่าระดับน้ำจากแถวอินทร์บุรีได้ — ไม่พบตัวเลขที่ถูกต้อง")
+                    continue
             
             print("⚠️ ไม่พบข้อมูลสถานี 'อินทร์บุรี' ในตาราง")
             if driver: driver.quit()
